@@ -1,50 +1,45 @@
+// src/utils.ts
+
 import * as frida from 'frida';
 import * as fs from 'fs';
 
 export const connect_frida = async (
-    app_name: string, 
-    fridaScriptFile: string,
-    init_cb?: (script: frida.Script) => void,
-    message_cb?: (message: any) => void
-    )=> {
-
+  app_name: string,
+  fridaScriptFile: string,
+  init_cb: (script: frida.Script | null) => void, // ✅ Bắt buộc, không optional
+  message_cb?: (message: any) => void
+) => {
   try {
-      // Connect to device
-      const device = await frida.getUsbDevice();
-      console.log('Connected to device:', device.name);
+    const device = await frida.getUsbDevice();
+    console.log('✅ Connected to device:', device.name);
 
-      const scriptContent = fs.readFileSync(fridaScriptFile, 'utf8');
+    const processes = await device.enumerateProcesses();
+    const targetProcess = processes.find(p => p.name === app_name || p.name.includes(app_name));
 
-      // Get running processes
-      const processes = await device.enumerateProcesses();
-      
-      const targetProcess = processes.find(p => p.name.includes(app_name));
-      
-      if (!targetProcess) {
-          throw new Error('Target process not found');
-      }
+    if (!targetProcess) {
+      console.error(`❌ Không tìm thấy process: ${app_name}`);
+      console.log('Các process đang chạy:');
+      processes.forEach(p => console.log(`  ${p.pid} ${p.name}`));
+      init_cb(null); // ✅ Vẫn gọi callback
+      return;
+    }
 
-      // Attach to the process
-      const session = await device.attach(targetProcess.pid);
-      console.log('Attached to process:', targetProcess.name);
+    const session = await device.attach(targetProcess.pid);
+    console.log(`✅ Đã attach vào: ${targetProcess.name} (PID: ${targetProcess.pid})`);
 
-      // Create script
-      const script = await session.createScript(scriptContent);
+    const scriptContent = fs.readFileSync(fridaScriptFile, 'utf8');
+    const script = await session.createScript(scriptContent);
 
-      // Handle script messages
-      script.message.connect((message: any) => {
-        message_cb && message_cb(message);
-      });
+    script.message.connect((message) => {
+      message_cb?.(message);
+    });
 
-      init_cb && init_cb(script);
+    await script.load();
+    console.log('✅ Frida script đã được load');
 
-      // Load script
-      await script.load();
-      console.log('Frida Script loaded successfully');
-
-    //const ret = await script.exports.invoke_init();
-
+    init_cb(script); // ✅ Gọi với script thành công
   } catch (error) {
-      console.error('Error:', error);
+    console.error('❌ Lỗi kết nối Frida:', error);
+    init_cb(null); // ✅ Vẫn gọi callback dù thất bại
   }
-}
+};

@@ -1,48 +1,57 @@
+// src/server.ts
+
 import express from 'express';
 import path from 'path';
-
-import { 
-  app_name,
-} from './common';
-
-import { createServer } from 'http';
+import { app_name } from './common';
 import { connect_frida } from './utils';
 
 const app = express();
 const port = 3000;
+const fridaScriptFile = path.join(__dirname, '..', 'frida', '_agent.js');
 
-const fridaScriptFile = path.join(__dirname, '..', '..', 'frida', '_agent.js');
-
-// Serve static files from the dist/public directory instead of src/public
-app.use(express.json());  // for parsing application/json
-// app.use(express.urlencoded({ extended: true }));  // for parsing application/x-www-form-urlencoded
+// Serve static files
 app.use(express.static(path.join(__dirname, '..', 'dist', 'public')));
+app.use(express.json());
 
+// ✅ Biến global để lưu script
+let fridaScript: any = null;
 
-connect_frida(app_name, fridaScriptFile, (script) => {
+// ✅ Gọi connect_frida, nhưng luôn tạo route
+connect_frida(
+  app_name,
+  fridaScriptFile,
+  (script) => {
+    fridaScript = script;
+    console.log(script ? '✅ Frida script loaded' : '⚠️ Frida script load thất bại');
+  },
+  (message) => {
+    console.log('Frida message:', message);
+  }
+);
 
-  // add a route to invoke frida functions
-  app.post('/api/invoke_frida_function', async (req, res) => {
-    const { fun, arg } = await req.body;
-    const result = await script.exports.invoke_frida_function(fun, arg);
+// ✅ Route luôn tồn tại
+app.post('/api/invoke_frida_function', async (req, res) => {
+  const { fun, arg } = req.body;
+
+  if (!fridaScript) {
+    return res.status(503).json({
+      error: 'Frida chưa kết nối. Kiểm tra app có đang chạy không.'
+    });
+  }
+
+  try {
+    const result = await fridaScript.exports.invoke_frida_function(fun, arg);
     if (result instanceof Buffer) {
       res.setHeader('Content-Type', 'application/octet-stream');
-      res.send(result);
-    } else {
-      res.setHeader('Content-Type', 'application/json');
-      res.json(result);
+      return res.send(result);
     }
-  });
-
-  console.log('Frida script loaded');
+    res.json(result);
+  } catch (error: any) {
+    console.error('❌ Lỗi khi gọi hàm Frida:', error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
-// Set up Socket.IO
-const httpServer = createServer(app);
-
-// Use httpServer instead of app.listen
-const server = httpServer;
-
-server.listen(port, () => {
-  console.log(`Server running at http://localhost:${port}`);
-}); 
+app.listen(port, () => {
+  console.log(`🚀 Server đang chạy tại http://localhost:${port}`);
+});
